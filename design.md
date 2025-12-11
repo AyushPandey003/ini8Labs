@@ -40,11 +40,137 @@ To support 1,000 users, I would consider:
 ## 2. Architecture Overview
 
 ```mermaid
+C4Context
+    title System Context Diagram (Level 1)
+    
+    Person(user, "Patient", "A user viewing/uploading medical records")
+    System(system, "Patient Portal", "Full-stack application for managing medical documents")
+    
+    Rel(user, system, "Uses", "HTTPS")
+```
+
+### 2.1 Container Diagram (Level 2)
+
+```mermaid
 graph TD
-    User[User (Browser)] <-->|HTTPS| NextJS[Next.js Frontend]
-    NextJS <-->|Rewrite /api| FastAPI[FastAPI Backend]
-    FastAPI <-->|SQL| DB[(Neon PostgreSQL)]
-    FastAPI <-->|Read/Write| FS[File System / S3]
+    subgraph Client
+        Browser[Web Browser]
+    end
+
+    subgraph "Patient Portal System"
+        Frontend[Next.js Frontend]
+        Backend[FastAPI Backend]
+        DB[(Neon PostgreSQL)]
+        Storage[Local FileSystem / S3]
+    end
+
+    Browser <-->|HTTPS / JSON| Frontend
+    Frontend <-->|HTTP / Rewrite| Backend
+    Backend <-->|SQL| DB
+    Backend <-->|Read/Write Stream| Storage
+    
+    classDef primary fill:#2563eb,stroke:#1d4ed8,color:white;
+    classDef secondary fill:#475569,stroke:#334155,color:white;
+    classDef db fill:#16a34a,stroke:#15803d,color:white;
+    
+    class Frontend,Backend primary;
+    class Browser secondary;
+    class DB,Storage db;
+```
+
+---
+
+## 3. Database Schema (ERD)
+
+```mermaid
+erDiagram
+    DOCUMENTS {
+        int id PK
+        string filename "Original filename"
+        string filepath "Storage path"
+        int filesize "Size in bytes"
+        datetime created_at "Upload timestamp"
+    }
+```
+
+---
+
+## 4. Interaction Flows (Sequence Diagrams)
+
+### 4.1 Upload Workflow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend as Next.js
+    participant Backend as FastAPI
+    participant DB as Neon DB
+    participant FS as File System
+
+    User->>Frontend: Select & Drop File
+    Frontend->>Frontend: Validate MIME Type (PDF)
+    Frontend->>Backend: POST /api/documents/upload (FormData)
+    activate Backend
+    Backend->>Backend: Generate Unique Filename
+    Backend->>FS: Stream Save File
+    alt File Save Success
+        Backend->>DB: INSERT INTO documents
+        DB-->>Backend: Return ID & Metadata
+        Backend-->>Frontend: 200 OK + Document JSON
+        Frontend-->>User: Show Success Toast
+    else Save Failed
+        Backend-->>Frontend: 500 Error
+        Frontend-->>User: Show Error Message
+    end
+    deactivate Backend
+```
+
+### 4.2 Download Workflow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    participant DB
+    participant FS
+
+    User->>Frontend: Click "Download"
+    Frontend->>Backend: GET /api/documents/download/{id}
+    activate Backend
+    Backend->>DB: Query path by ID
+    alt Document Found
+        Backend->>FS: Read File Stream
+        FS-->>Backend: Binary Stream
+        Backend-->>Frontend: 200 OK (application/pdf)
+        Frontend-->>User: Trigger Browser Download
+    else Not Found
+        Backend-->>Frontend: 404 Not Found
+    end
+    deactivate Backend
+```
+
+### 4.3 Delete Workflow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    participant DB
+    participant FS
+
+    User->>Frontend: Click "Delete"
+    Frontend->>Backend: DELETE /api/documents/{id}
+    activate Backend
+    Backend->>DB: SELECT filepath FROM documents WHERE id={id}
+    
+    alt Document Exists
+        Backend->>FS: Delete File from Disk
+        Backend->>DB: DELETE FROM documents WHERE id={id}
+        Backend-->>Frontend: 200 OK
+        Frontend->>Frontend: Remove from List
+    else Document Not Found
+        Backend-->>Frontend: 404 Not Found
+    end
+    deactivate Backend
 ```
 
 **Flow:**
